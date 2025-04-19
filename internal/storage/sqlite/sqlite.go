@@ -7,6 +7,7 @@ import (
 	"github.com/mattn/go-sqlite3"
 	"github.com/sokratgruzit/goCatan/internal/models"
 	"github.com/sokratgruzit/goCatan/internal/storage"
+	"golang.org/x/crypto/bcrypt"
 )
 
 type Storage struct {
@@ -29,7 +30,13 @@ func New(storagePath string) (*Storage, error) {
 			password TEXT NOT NULL,
 			username TEXT,
 			balance INTEGER NOT NULL DEFAULT 0,
-			demo_balance INTEGER NOT NULL DEFAULT 0
+			demo_balance INTEGER NOT NULL DEFAULT 0,
+			address TEXT DEFAULT '',
+			access_token TEXT DEFAULT '',
+			roles TEXT DEFAULT '',
+			avatar TEXT DEFAULT 'avatar.jpg',
+			game_started BOOLEAN NOT NULL DEFAULT 0,
+			switch_account BOOLEAN NOT NULL DEFAULT 0
 		);
 
 		CREATE INDEX IF NOT EXISTS idx_email ON users(email);
@@ -49,15 +56,20 @@ func (s *Storage) RegisterUser(email string, password string, username string) (
 		initialDemo    = 5000
 	)
 
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return 0, fmt.Errorf("%s: failed to hash password: %w", op, err)
+	}
+
 	stmt, err := s.db.Prepare(`
-		INSERT INTO users(email, password, username, balance, demo_balance)
-		VALUES(?, ?, ?, ?, ?)
+		INSERT INTO users(email, password, username, balance, demo_balance, address, access_token, roles, avatar, game_started, switch_account)
+		VALUES(?, ?, ?, ?, ?, '', '', '', 'avatar.jpg', 0, 0)
 	`)
 	if err != nil {
 		return 0, fmt.Errorf("%s: %w", op, err)
 	}
 
-	res, err := stmt.Exec(email, password, username, initialBalance, initialDemo)
+	res, err := stmt.Exec(email, string(hashedPassword), username, initialBalance, initialDemo)
 	if err != nil {
 		if sqliteErr, ok := err.(sqlite3.Error); ok && sqliteErr.ExtendedCode == sqlite3.ErrConstraintUnique {
 			return 0, fmt.Errorf("%s: %w", op, storage.ErrUserExists)
@@ -77,21 +89,26 @@ func (s *Storage) User(email string) (*models.User, error) {
 	const op = "storage.sqlite.GetUser"
 
 	row := s.db.QueryRow(`
-		SELECT id, email, password, username, balance, demo_balance
-		FROM users
-		WHERE email = ?
+		SELECT id, email, password, username, balance, demo_balance, address, access_token, roles, avatar, game_started, switch_account
+		FROM users WHERE email = ?
 	`, email)
 
 	var (
-		id          int64
-		storedEmail string
-		password    string
-		username    string
-		balance     int64
-		demoBalance int64
+		id            int64
+		storedEmail   string
+		password      string
+		username      string
+		balance       int64
+		demoBalance   int64
+		address       string
+		accessToken   string
+		roles         string
+		avatar        string
+		gameStarted   bool
+		switchAccount bool
 	)
 
-	err := row.Scan(&id, &storedEmail, &password, &username, &balance, &demoBalance)
+	err := row.Scan(&id, &storedEmail, &password, &username, &balance, &demoBalance, &address, &accessToken, &roles, &avatar, &gameStarted, &switchAccount)
 
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -104,12 +121,73 @@ func (s *Storage) User(email string) (*models.User, error) {
 
 	// you can return a struct if you have one
 	return &models.User{
-		ID:          id,
-		Email:       storedEmail,
-		Password:    password,
-		Username:    username,
-		Balance:     balance,
-		DemoBalance: demoBalance,
+		ID:            id,
+		Email:         storedEmail,
+		Password:      "",
+		Username:      username,
+		Balance:       balance,
+		DemoBalance:   demoBalance,
+		Address:       address,
+		AccessToken:   accessToken,
+		Roles:         roles,
+		Avatar:        avatar,
+		GameStarted:   gameStarted,
+		SwitchAccount: switchAccount,
+	}, nil
+}
+
+func (s *Storage) Login(email string, password string) (*models.User, error) {
+	const op = "storage.sqlite.Login"
+
+	row := s.db.QueryRow(`
+		SELECT id, email, password, username, balance, demo_balance, address, access_token, roles, avatar, game_started, switch_account
+		FROM users WHERE email = ?
+	`, email)
+
+	var (
+		id             int64
+		storedEmail    string
+		hashedPassword string
+		username       string
+		balance        int64
+		demoBalance    int64
+		address        string
+		accessToken    string
+		roles          string
+		avatar         string
+		gameStarted    bool
+		switchAccount  bool
+	)
+
+	err := row.Scan(&id, &storedEmail, &hashedPassword, &username, &balance, &demoBalance, &address, &accessToken, &roles, &avatar, &gameStarted, &switchAccount)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			// handle not found
+			return nil, fmt.Errorf("%s: %w", op, err)
+		}
+
+		return nil, fmt.Errorf("%s: %w", op, err)
+	}
+
+	if err := bcrypt.CompareHashAndPassword([]byte(hashedPassword), []byte(password)); err != nil {
+		return nil, fmt.Errorf("%s: invalid password", op)
+	}
+
+	// you can return a struct if you have one
+	return &models.User{
+		ID:            id,
+		Email:         storedEmail,
+		Password:      "",
+		Username:      username,
+		Balance:       balance,
+		DemoBalance:   demoBalance,
+		Address:       address,
+		AccessToken:   accessToken,
+		Roles:         roles,
+		Avatar:        avatar,
+		GameStarted:   gameStarted,
+		SwitchAccount: switchAccount,
 	}, nil
 }
 
@@ -117,7 +195,7 @@ func (s *Storage) Users() ([]*models.User, error) {
 	const op = "storage.sqlite.Users"
 
 	rows, err := s.db.Query(`
-		SELECT id, email, password, username, balance, demo_balance
+		SELECT id, email, password, username, balance, demo_balance, address, access_token, roles, avatar, game_started, switch_account
 		FROM users
 	`)
 	if err != nil {
@@ -137,10 +215,18 @@ func (s *Storage) Users() ([]*models.User, error) {
 			&user.Username,
 			&user.Balance,
 			&user.DemoBalance,
+			&user.Address,
+			&user.AccessToken,
+			&user.Roles,
+			&user.Avatar,
+			&user.GameStarted,
+			&user.SwitchAccount,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", op, err)
 		}
+
+		user.Password = ""
 
 		users = append(users, &user)
 	}

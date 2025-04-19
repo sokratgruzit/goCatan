@@ -1,7 +1,6 @@
-package register
+package login
 
 import (
-	"errors"
 	"log/slog"
 	"net/http"
 
@@ -9,27 +8,26 @@ import (
 	"github.com/go-chi/render"
 	"github.com/go-playground/validator/v10"
 	resp "github.com/sokratgruzit/goCatan/internal/lib/api/response"
-	"github.com/sokratgruzit/goCatan/internal/storage"
+	"github.com/sokratgruzit/goCatan/internal/models"
 )
 
 type Request struct {
 	Email    string `json:"email" validate:"required,email"`
 	Password string `json:"password" validate:"required"`
-	Username string `json:"username" validate:"required"`
 }
 
 type Response struct {
 	resp.Response
-	UserID int64 `json:"user_id,omitempty"`
+	User models.User `json:"user"`
 }
 
-type UserRegisterer interface {
-	RegisterUser(email string, password string, username string) (int64, error)
+type UserLoginer interface {
+	Login(email string, password string) (*models.User, error)
 }
 
-func New(log *slog.Logger, userRegisterer UserRegisterer) http.HandlerFunc {
+func New(log *slog.Logger, userLoginer UserLoginer) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		const op = "handlers.users.register.New"
+		const op = "handlers.auth.login.New"
 
 		log = log.With(
 			slog.String("op", op),
@@ -60,29 +58,23 @@ func New(log *slog.Logger, userRegisterer UserRegisterer) http.HandlerFunc {
 			return
 		}
 
-		userID, err := userRegisterer.RegisterUser(req.Email, req.Password, req.Username)
-
-		if errors.Is(err, storage.ErrUserExists) {
-			log.Warn("user already exists", slog.String("email", req.Email))
-			render.JSON(w, r, resp.Error("user already exists"))
-			return
-		}
+		user, err := userLoginer.Login(req.Email, req.Password)
 
 		if err != nil {
-			log.Error("failed to register user", slog.Any("err", err))
-			render.JSON(w, r, resp.Error("failed to register user"))
+			log.Error("failed to login user", slog.Any("err", err))
+			render.JSON(w, r, resp.Error("invalid email or password"))
 			return
 		}
 
-		log.Info("user registered", slog.Int64("user_id", userID))
+		log.Info("user logged in", slog.Any("user", user))
 
-		responseOK(w, r, userID)
+		responseOK(w, r, user)
 	}
 }
 
-func responseOK(w http.ResponseWriter, r *http.Request, userID int64) {
+func responseOK(w http.ResponseWriter, r *http.Request, user *models.User) {
 	render.JSON(w, r, Response{
 		Response: resp.OK(),
-		UserID:   userID,
+		User:     *user,
 	})
 }

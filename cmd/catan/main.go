@@ -11,10 +11,12 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/go-chi/cors"
 	"github.com/sokratgruzit/goCatan/internal/config"
+	"github.com/sokratgruzit/goCatan/internal/http-server/handlers/auth/login"
+	"github.com/sokratgruzit/goCatan/internal/http-server/handlers/auth/register"
 	"github.com/sokratgruzit/goCatan/internal/http-server/handlers/users/getuser"
 	"github.com/sokratgruzit/goCatan/internal/http-server/handlers/users/getusers"
-	"github.com/sokratgruzit/goCatan/internal/http-server/handlers/users/register"
 	mwLogger "github.com/sokratgruzit/goCatan/internal/http-server/middleware/logger"
 	"github.com/sokratgruzit/goCatan/internal/storage/sqlite"
 )
@@ -43,9 +45,16 @@ func main() {
 	router.Use(mwLogger.New(log))
 	router.Use(middleware.Recoverer)
 	router.Use(middleware.URLFormat)
+	router.Use(cors.Handler(cors.Options{
+		AllowedOrigins:   []string{"http://localhost:5173"}, // Frontend origin
+		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowedHeaders:   []string{"Content-Type", "Authorization"},
+		AllowCredentials: true,
+	}))
 
-	router.Post("/api/register", register.New(log, storage))
-	router.Get("/api/user/{email}", getuser.New(log, storage))
+	router.Post("/api/auth/register", register.New(log, storage))
+	router.Post("/api/auth/login", login.New(log, storage))
+	router.Get("/api/user", getuser.New(log, storage))
 	router.Get("/api/users", getusers.New(log, storage))
 
 	log.Info("starting server", slog.String("address", cfg.Address))

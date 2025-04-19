@@ -4,8 +4,8 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/render"
 	resp "github.com/sokratgruzit/goCatan/internal/lib/api/response"
@@ -31,9 +31,10 @@ func New(log *slog.Logger, userGetter UserGetter) http.HandlerFunc {
 			slog.String("request_id", middleware.GetReqID(r.Context())),
 		)
 
-		email := chi.URLParam(r, "email")
+		email := strings.TrimSpace(r.URL.Query().Get("email"))
+
 		if email == "" {
-			render.JSON(w, r, resp.Error("email path param required"))
+			render.JSON(w, r, resp.Error("email query param required"))
 			return
 		}
 
